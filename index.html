@@ -220,7 +220,8 @@ const refConfig=()=>db.collection('casas').doc(CASA).collection('config').doc('g
 const CACHE='nossaCasaCache';
 const FAMILIA=['Hades','Mimi','Stella','Navi'];
 const CATEGORIAS=['Aluguel','Mercado','Gasolina','Contas','Saúde','Lazer','Outros'];
-const COLECOES=['gastos','planos','pauta','caderno','compras','meds','consumo','humor','brigas','sexo','casa','spot','lembrancas'];
+const COLECOES=['gastos','planos','pauta','caderno','compras','meds','medTomado','consumo','humor','brigas','sexo','casa','spot','lembrancas','refeicoes','exercicios','peso','carinho','encontros','desejos'];
+const PESSOAS=['Hades','Mimi'];
 const CONSUMOS=[
   {tipo:'alcool',rotulo:'Álcool',emoji:'🍺',unidade:'doses'},
   {tipo:'energetico',rotulo:'Energético',emoji:'⚡',unidade:'latas'},
@@ -260,6 +261,10 @@ function erroEscrita(e){
   else console.warn('Falha ao gravar (será reenviado quando a internet voltar):',e);}
 function quemSou(){const u=auth.currentUser;if(!u)return '';
   return (u.email||'').split('@')[0];}
+function euSou(){const e=(auth.currentUser&&auth.currentUser.email||'').toLowerCase();
+  return (e.indexOf('mimi')>=0||e.indexOf('yasmim')>=0)?'Mimi':'Hades';}
+function selQuem(id){return `<select id="${id}">${PESSOAS.map(p=>
+  `<option ${p===euSou()?'selected':''}>${p}</option>`).join('')}</select>`;}
 
 /* ===================== LOGIN ===================== */
 function telaLogin(msg){
@@ -326,7 +331,7 @@ function erroLeitura(e){
 const SECOES=[
   {id:'inicio',nome:'Início'},{id:'conversas',nome:'Conversas'},{id:'planos',nome:'Planos'},
   {id:'financas',nome:'Finanças'},{id:'compras',nome:'Compras'},{id:'saude',nome:'Saúde'},
-  {id:'humor',nome:'Humor'},{id:'casal',nome:'Casal'},{id:'casa',nome:'Casa'},
+  {id:'humor',nome:'Humor'},{id:'nos',nome:'Nós'},{id:'casal',nome:'Casal'},{id:'casa',nome:'Casa'},
   {id:'spot',nome:'Spot'},{id:'lembrancas',nome:'Lembranças'}
 ];
 let secaoAtiva='inicio', calMes={};
@@ -348,7 +353,7 @@ function render(){
   if(!auth.currentUser)return;
   renderNav();renderStatus();
   const f={inicio:vInicio,conversas:vConversas,planos:vPlanos,financas:vFinancas,
-    compras:vCompras,saude:vSaude,humor:vHumor,casal:vCasal,casa:vCasa,spot:vSpot,lembrancas:vLembrancas};
+    compras:vCompras,saude:vSaude,humor:vHumor,nos:vNos,casal:vCasal,casa:vCasa,spot:vSpot,lembrancas:vLembrancas};
   $('main').innerHTML=f[secaoAtiva]();
   if(secaoAtiva==='inicio')desenharGrafico();
   if(secaoAtiva==='compras'&&focarCompra){focarCompra=false;const i=$('fItem');if(i)i.focus();}
@@ -647,6 +652,20 @@ function vSaude(){
     :`<div class="vazio">Cadastre os remédios pra marcar todo dia.</div>`;
   h+=`<button class="btn-leve btn-linha" onclick="mMed()">+ Cadastrar remédio</button></div>`;
 
+  // ---- medicação tomada (registro avulso) ----
+  const tomadas=[...S.medTomado].sort((a,b)=>b.datetime.localeCompare(a.datetime)).slice(0,15);
+  h+=`<div class="card"><h2>🧾 Medicação tomada</h2>
+    <p class="mudo" style="margin-bottom:6px">Pro que não tem horário fixo: dor, enxaqueca, sintoma do dia.</p>
+    <button class="btn verde btn-linha" style="margin-top:0" onclick="mTomado()">+ Registrar o que foi tomado</button>`;
+  h+=tomadas.length?tomadas.map(t=>`
+    <div class="item"><div class="corpo">
+      <div class="titulo">${esc(t.nome)}${t.dose?` — ${esc(t.dose)}`:''} <span class="selo roxo">${esc(t.quem)}</span></div>
+      <div class="sub">${fmtData(t.datetime.slice(0,10))} ${t.datetime.slice(11,16)}${t.motivo?` · ${esc(t.motivo)}`:''}</div></div>
+      <button class="btn-mini" onclick="apagar('medTomado','${t.id}')">×</button></div>`).join('')
+    :`<div class="vazio" style="margin-top:8px">Nada registrado ainda.</div>`;
+  h+=`</div>`;
+
+  // ---- consumo ----
   h+=`<div class="card"><h2>📋 Registrar consumo</h2>
     <p class="mudo" style="margin-bottom:4px">Só registro — o número fala por si.</p>
     <div class="grade-rapida">${CONSUMOS.map(c=>`
@@ -654,24 +673,38 @@ function vSaude(){
     </div></div>`;
 
   const seteAtras=diasAtras(6),catorzeAtras=diasAtras(13);
-  h+=`<div class="card"><h2>Esta semana × semana passada</h2>`;
+  const soma=(tipo,quem,de,ate)=>S.consumo.filter(x=>x.tipo===tipo&&(x.quem||'Hades')===quem
+    &&x.datetime.slice(0,10)>=de&&(!ate||x.datetime.slice(0,10)<ate)).reduce((s,x)=>s+x.qtd,0);
+  h+=`<div class="card"><h2>Esta semana, por pessoa</h2>
+    <div class="mudo" style="margin-bottom:6px">entre parênteses, a semana anterior</div>`;
   CONSUMOS.forEach(c=>{
-    const atual=S.consumo.filter(x=>x.tipo===c.tipo&&x.datetime.slice(0,10)>=seteAtras).reduce((s,x)=>s+x.qtd,0);
-    const antes=S.consumo.filter(x=>x.tipo===c.tipo&&x.datetime.slice(0,10)>=catorzeAtras&&x.datetime.slice(0,10)<seteAtras).reduce((s,x)=>s+x.qtd,0);
-    h+=`<div class="item"><div class="corpo" style="display:flex;justify-content:space-between;align-items:center">
-      <span>${c.emoji} ${c.rotulo}</span>
-      <span><b>${atual}</b> <span class="mudo">${c.unidade} · antes: ${antes}</span></span></div></div>`;});
+    h+=`<div class="item"><div class="corpo">
+      <div class="titulo">${c.emoji} ${c.rotulo}</div>
+      <div class="sub">${PESSOAS.map(p=>
+        `${p}: <b style="color:var(--ink)">${soma(c.tipo,p,seteAtras)}</b> (${soma(c.tipo,p,catorzeAtras,seteAtras)})`).join(' &nbsp;·&nbsp; ')}
+        <span class="mudo">${c.unidade}</span></div></div></div>`;});
   h+=`</div>`;
 
   const recentes=[...S.consumo].sort((a,b)=>b.datetime.localeCompare(a.datetime)).slice(0,12);
   if(recentes.length){h+=`<div class="card"><h2>Últimos registros</h2>`+recentes.map(x=>{
     const c=CONSUMOS.find(k=>k.tipo===x.tipo);
     return `<div class="item"><div class="corpo">
-      <div class="titulo">${c.emoji} ${x.qtd} ${c.unidade}</div>
+      <div class="titulo">${c.emoji} ${x.qtd} ${c.unidade} <span class="selo roxo">${esc(x.quem||'Hades')}</span></div>
       <div class="sub">${fmtData(x.datetime.slice(0,10))} ${x.datetime.slice(11,16)}${x.obs?` · ${esc(x.obs)}`:''}</div></div>
       <button class="btn-mini" onclick="apagar('consumo','${x.id}')">×</button></div>`;}).join('')+`</div>`;}
   return h;
 }
+function mTomado(){abrirModal(`<h2>🧾 Medicação tomada</h2>
+  <label>Quem tomou</label>${selQuem('fQuem')}
+  <div class="linha2"><div><label>Remédio</label><input id="fNome" placeholder="Ex.: Dipirona"></div>
+  <div><label>Dose</label><input id="fDose" placeholder="Ex.: 1g"></div></div>
+  <label>Quando</label><input type="datetime-local" id="fQuando" value="${hojeISO()}T${new Date().toTimeString().slice(0,5)}">
+  <label>Motivo (opcional)</label><input id="fMotivo" placeholder="Ex.: dor de cabeça">
+  ${botoes(`salvarTomado()`)}`);}
+function salvarTomado(){const n=$('fNome').value.trim();if(!n)return;
+  novo('medTomado',{quem:$('fQuem').value,nome:n,dose:$('fDose').value.trim(),
+    datetime:$('fQuando').value||(hojeISO()+'T12:00'),motivo:$('fMotivo').value.trim()});
+  fecharModal();}
 function toggleMed(id,estava){
   const d={};d[hojeISO()]={};d[hojeISO()][id]=!estava;
   gravarConfig({medLog:d});}
@@ -685,12 +718,13 @@ function salvarMed(){const n=$('fNome').value.trim();if(!n)return;
   fecharModal();}
 function mConsumo(tipo){const c=CONSUMOS.find(k=>k.tipo===tipo);
   abrirModal(`<h2>${c.emoji} ${c.rotulo}</h2>
+  <label>Quem</label>${selQuem('fQuem')}
   <label>Quantidade (${c.unidade})</label><input type="number" id="fQtd" inputmode="decimal" value="1" step="0.5">
   <label>Quando</label><input type="datetime-local" id="fQuando" value="${hojeISO()}T${new Date().toTimeString().slice(0,5)}">
   <label>Nota (opcional)</label><input id="fObs" placeholder="Ex.: churrasco na casa do vizinho">
   ${botoes(`salvarConsumo('${tipo}')`)}`);}
 function salvarConsumo(tipo){
-  novo('consumo',{tipo,qtd:parseFloat($('fQtd').value)||1,
+  novo('consumo',{tipo,quem:$('fQuem').value,qtd:parseFloat($('fQtd').value)||1,
     datetime:$('fQuando').value||(hojeISO()+'T12:00'),obs:$('fObs').value.trim()});
   fecharModal();}
 
@@ -718,6 +752,97 @@ function mHumor(){abrirModal(`<h2>Como está o humor?</h2>
 function salvarHumor(){
   novo('humor',{pessoa:$('fPessoa').value,nota:parseFloat($('fNota').value),
     date:$('fData').value||hojeISO(),obs:$('fObs').value.trim()});fecharModal();}
+
+/* ===================== NÓS: DIETA E EXERCÍCIOS ===================== */
+const REFEICOES=['Café','Almoço','Jantar','Lanche'];
+const EXERCICIOS=['Caminhada','Corrida','Musculação','Bicicleta','Natação','Alongamento','Outro'];
+let abaNos='exercicio';
+function vNos(){
+  let h=`<div class="toggle2" style="margin-bottom:12px">
+    <button class="${abaNos==='exercicio'?'on':''}" onclick="abaNos='exercicio';render()">🏃 Exercícios</button>
+    <button class="${abaNos==='dieta'?'on':''}" onclick="abaNos='dieta';render()">🥗 Dieta</button>
+  </div>`;
+
+  if(abaNos==='exercicio'){
+    const sete=diasAtras(6);
+    h+=`<button class="btn verde btn-linha" style="margin:0 0 12px" onclick="mExercicio()">+ Registrar exercício</button>`;
+    h+=`<div class="card"><h2>Últimos 7 dias</h2>`;
+    PESSOAS.forEach(p=>{
+      const meus=S.exercicios.filter(x=>x.quem===p&&x.date>=sete);
+      const min=meus.reduce((s,x)=>s+(x.minutos||0),0);
+      h+=`<div class="item"><div class="corpo" style="display:flex;justify-content:space-between;align-items:center">
+        <span>${p}</span><span><b>${meus.length}</b> <span class="mudo">treinos · ${min} min</span></span></div></div>`;});
+    h+=`</div>`;
+    const regs=[...S.exercicios].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,25);
+    h+=`<div class="card"><h2>🏃 Registros</h2>`;
+    h+=regs.length?regs.map(x=>`
+      <div class="item"><div class="corpo">
+        <div class="titulo">${esc(x.tipo)}${x.minutos?` — ${x.minutos} min`:''} <span class="selo roxo">${esc(x.quem)}</span></div>
+        <div class="sub">${fmtData(x.date)}${x.intensidade?` · ${esc(x.intensidade)}`:''}${x.obs?` · ${esc(x.obs)}`:''}</div></div>
+        <button class="btn-mini" onclick="apagar('exercicios','${x.id}')">×</button></div>`).join('')
+      :`<div class="vazio">Nenhum treino registrado ainda.</div>`;
+    h+=`</div>`;
+  }else{
+    h+=`<div class="grade-rapida" style="margin-bottom:12px">
+      <button class="rapido" onclick="mRefeicao()"><span class="emoji">🍽️</span>Registrar refeição</button>
+      <button class="rapido" onclick="mPeso()"><span class="emoji">⚖️</span>Registrar peso</button></div>`;
+    h+=`<div class="card"><h2>⚖️ Peso</h2>`;
+    PESSOAS.forEach(p=>{
+      const meus=[...S.peso].filter(x=>x.quem===p).sort((a,b)=>b.date.localeCompare(a.date));
+      const ult=meus[0], ant=meus[1];
+      const dif=(ult&&ant)?(ult.kg-ant.kg):null;
+      h+=`<div class="item"><div class="corpo" style="display:flex;justify-content:space-between;align-items:center">
+        <span>${p}</span><span>${ult?`<b>${ult.kg} kg</b> <span class="mudo">${fmtData(ult.date)}${dif!==null?` · ${dif>0?'+':''}${dif.toFixed(1)}`:''}</span>`:'<span class="mudo">sem registro</span>'}</span>
+      </div></div>`;});
+    h+=`</div>`;
+    const refs=[...S.refeicoes].sort((a,b)=>b.datetime.localeCompare(a.datetime)).slice(0,25);
+    h+=`<div class="card"><h2>🍽️ Refeições</h2>`;
+    h+=refs.length?refs.map(r=>`
+      <div class="item"><div class="corpo">
+        <div class="titulo">${esc(r.tipo)} <span class="selo roxo">${esc(r.quem)}</span>${r.foraDaDieta?' <span class="selo rosa">fora do plano</span>':''}</div>
+        <div class="sub">${fmtData(r.datetime.slice(0,10))} ${r.datetime.slice(11,16)}</div>
+        ${r.oque?`<div class="texto">${esc(r.oque)}</div>`:''}</div>
+        <button class="btn-mini" onclick="apagar('refeicoes','${r.id}')">×</button></div>`).join('')
+      :`<div class="vazio">Sem refeições registradas.</div>`;
+    h+=`</div>`;
+  }
+  return h;
+}
+function mExercicio(){abrirModal(`<h2>🏃 Registrar exercício</h2>
+  <label>Quem</label>${selQuem('fQuem')}
+  <label>Tipo</label><select id="fTipo">${EXERCICIOS.map(e=>`<option>${e}</option>`).join('')}</select>
+  <div class="linha2"><div><label>Minutos</label><input type="number" id="fMin" inputmode="numeric" value="30"></div>
+  <div><label>Intensidade</label><select id="fInt"><option>Leve</option><option selected>Moderada</option><option>Forte</option></select></div></div>
+  <label>Data</label><input type="date" id="fData" value="${hojeISO()}">
+  <label>Nota (opcional)</label><input id="fObs">
+  ${botoes(`salvarExercicio()`)}`);}
+function salvarExercicio(){
+  novo('exercicios',{quem:$('fQuem').value,tipo:$('fTipo').value,
+    minutos:parseInt($('fMin').value)||0,intensidade:$('fInt').value,
+    date:$('fData').value||hojeISO(),obs:$('fObs').value.trim()});fecharModal();}
+function mRefeicao(){abrirModal(`<h2>🍽️ Registrar refeição</h2>
+  <label>Quem</label>${selQuem('fQuem')}
+  <label>Refeição</label><select id="fTipo">${REFEICOES.map(r=>`<option>${r}</option>`).join('')}</select>
+  <label>Quando</label><input type="datetime-local" id="fQuando" value="${hojeISO()}T${new Date().toTimeString().slice(0,5)}">
+  <label>O que comeu</label><textarea id="fOque" placeholder="Ex.: arroz, feijão, frango grelhado e salada"></textarea>
+  <label>Saiu do planejado?</label><div class="toggle2">
+    <button id="tNao2" class="on" onclick="tgFora(false)">Não</button>
+    <button id="tSim2" onclick="tgFora(true)">Sim</button></div>
+  <input type="hidden" id="fFora" value="">
+  ${botoes(`salvarRefeicao()`)}`);}
+function tgFora(v){$('fFora').value=v?'1':'';
+  $('tSim2').classList.toggle('on',v);$('tNao2').classList.toggle('on',!v);}
+function salvarRefeicao(){
+  novo('refeicoes',{quem:$('fQuem').value,tipo:$('fTipo').value,
+    datetime:$('fQuando').value||(hojeISO()+'T12:00'),
+    oque:$('fOque').value.trim(),foraDaDieta:!!$('fFora').value});fecharModal();}
+function mPeso(){abrirModal(`<h2>⚖️ Registrar peso</h2>
+  <label>Quem</label>${selQuem('fQuem')}
+  <div class="linha2"><div><label>Peso (kg)</label><input type="number" id="fKg" inputmode="decimal" step="0.1"></div>
+  <div><label>Data</label><input type="date" id="fData" value="${hojeISO()}"></div></div>
+  ${botoes(`salvarPeso()`)}`);}
+function salvarPeso(){const kg=parseFloat($('fKg').value);if(!kg)return;
+  novo('peso',{quem:$('fQuem').value,kg,date:$('fData').value||hojeISO()});fecharModal();}
 
 /* ===================== CALENDÁRIO ===================== */
 function calendario(chave,marcadores,aoClicar){
@@ -750,8 +875,10 @@ function vCasal(){
   let h=`<div class="card">${calendario('casal',marcas,'diaCasal')}
     <div class="legenda"><span style="color:var(--rosa)">● briga</span><span style="color:var(--acai)">● sexo</span></div></div>`;
   h+=`<div class="grade-rapida" style="margin-bottom:12px">
-    <button class="rapido" onclick="mBriga()"><span class="emoji">⛈️</span>Registrar briga</button>
-    <button class="rapido" onclick="mSexo()"><span class="emoji">❤️</span>Registrar sexo</button></div>`;
+    <button class="rapido" onclick="mBriga()"><span class="emoji">⛈️</span>Briga</button>
+    <button class="rapido" onclick="mSexo()"><span class="emoji">❤️</span>Sexo</button>
+    <button class="rapido" onclick="mCarinho()"><span class="emoji">🤍</span>Carinho do dia</button>
+    <button class="rapido" onclick="mEncontro()"><span class="emoji">🍷</span>Encontro a dois</button></div>`;
   const brigas=[...S.brigas].sort((a,b)=>b.date.localeCompare(a.date));
   h+=`<div class="card"><h2>⛈️ Brigas</h2>`;
   h+=brigas.length?brigas.map(b=>`
@@ -772,8 +899,69 @@ function vCasal(){
       ${s.obs?`<div class="texto">${esc(s.obs)}</div>`:''}</div>
       <button class="btn-mini" onclick="apagar('sexo','${s.id}')">×</button></div>`).join('')
     :`<div class="vazio">Sem registros ainda.</div>`;
-  h+=`</div>`;return h;
+  h+=`</div>`;
+
+  const car=[...S.carinho].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,15);
+  h+=`<div class="card"><h2>🤍 Carinho e gestos</h2>
+    <p class="mudo" style="margin-bottom:4px">O que um fez pelo outro e valeu o dia.</p>`;
+  h+=car.length?car.map(c=>`
+    <div class="item"><div class="corpo">
+      <div class="titulo">${esc(c.dequem)} → ${esc(c.paraquem)} <span class="sub">· ${fmtData(c.date)}</span></div>
+      <div class="texto">${esc(c.texto)}</div></div>
+      <button class="btn-mini" onclick="apagar('carinho','${c.id}')">×</button></div>`).join('')
+    :`<div class="vazio">Nada anotado ainda.</div>`;
+  h+=`</div>`;
+
+  const enc=[...S.encontros].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,15);
+  const futuros=enc.filter(e=>e.date>=hojeISO());
+  h+=`<div class="card"><h2>🍷 Encontros a dois</h2>`;
+  if(futuros.length)h+=`<div class="mudo" style="margin-bottom:6px">Próximo: ${esc(futuros[futuros.length-1].oque)} em ${fmtData(futuros[futuros.length-1].date)}</div>`;
+  h+=enc.length?enc.map(e=>`
+    <div class="item"><div class="corpo">
+      <div class="titulo">${esc(e.oque)} ${e.date>=hojeISO()?'<span class="selo pendente">planejado</span>':''}</div>
+      <div class="sub">${fmtData(e.date)}${e.onde?` · ${esc(e.onde)}`:''}</div>
+      ${e.obs?`<div class="texto">${esc(e.obs)}</div>`:''}</div>
+      <button class="btn-mini" onclick="apagar('encontros','${e.id}')">×</button></div>`).join('')
+    :`<div class="vazio">Nenhum encontro registrado ou planejado.</div>`;
+  h+=`</div>`;
+
+  const des=[...S.desejos].sort((a,b)=>(b.criadoEm||0)-(a.criadoEm||0));
+  h+=`<div class="card"><h2>🔥 O que cada um gosta</h2>
+    <p class="mudo" style="margin-bottom:6px">Espaço pra dizer o que às vezes é difícil falar em voz alta.</p>
+    <button class="btn rosa btn-linha" style="margin-top:0" onclick="mDesejo()">+ Escrever</button>`;
+  h+=des.length?des.map(d=>`
+    <div class="item"><div class="corpo">
+      <div class="titulo">${esc(d.quem)}</div>
+      <div class="texto">${esc(d.texto)}</div></div>
+      <button class="btn-mini" onclick="apagar('desejos','${d.id}')">×</button></div>`).join('')
+    :`<div class="vazio" style="margin-top:8px">Vazio por enquanto.</div>`;
+  h+=`</div>`;
+  return h;
 }
+function mCarinho(){abrirModal(`<h2>🤍 Carinho do dia</h2>
+  <div class="linha2"><div><label>De quem</label>${selQuem('fDe')}</div>
+  <div><label>Para quem</label>${selQuem('fPara')}</div></div>
+  <label>Data</label><input type="date" id="fData" value="${hojeISO()}">
+  <label>O que foi</label><textarea id="fTexto" placeholder="Ex.: me deixou dormir até mais tarde"></textarea>
+  ${botoes(`salvarCarinho()`)}`);}
+function salvarCarinho(){const t=$('fTexto').value.trim();if(!t)return;
+  novo('carinho',{dequem:$('fDe').value,paraquem:$('fPara').value,
+    date:$('fData').value||hojeISO(),texto:t});fecharModal();}
+function mEncontro(){abrirModal(`<h2>🍷 Encontro a dois</h2>
+  <label>O que</label><input id="fOque" placeholder="Ex.: jantar sem as crianças">
+  <div class="linha2"><div><label>Data</label><input type="date" id="fData" value="${hojeISO()}"></div>
+  <div><label>Onde</label><input id="fOnde"></div></div>
+  <label>Como foi / o que planejar</label><textarea id="fObs"></textarea>
+  ${botoes(`salvarEncontro()`)}`);}
+function salvarEncontro(){const o=$('fOque').value.trim();if(!o)return;
+  novo('encontros',{oque:o,date:$('fData').value||hojeISO(),
+    onde:$('fOnde').value.trim(),obs:$('fObs').value.trim()});fecharModal();}
+function mDesejo(){abrirModal(`<h2>🔥 O que eu gosto</h2>
+  <label>Quem escreve</label>${selQuem('fQuem')}
+  <label>Texto</label><textarea id="fTexto" placeholder="O que te faz bem, o que queria mais, o que não curte…"></textarea>
+  ${botoes(`salvarDesejo()`)}`);}
+function salvarDesejo(){const t=$('fTexto').value.trim();if(!t)return;
+  novo('desejos',{quem:$('fQuem').value,texto:t});fecharModal();}
 function diaCasal(iso){
   const b=S.brigas.filter(x=>x.date===iso),s=S.sexo.filter(x=>x.date===iso);
   if(!b.length&&!s.length){mBriga(iso);return;}
